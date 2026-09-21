@@ -22,3 +22,5 @@ mlflow.db
 
 # Ignore locally generated artifact plots and reports
 artifacts/
+.venv/
+*.pyc
