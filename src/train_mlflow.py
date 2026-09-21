@@ -20,7 +20,7 @@ from sklearn.metrics import (
 def train_and_track(run_name="RandomForest_Baseline", params=None):
     if params is None:
         params = {
-            "n_estimators": 100,
+            "n_estimators": 150,
             "max_depth": 10,
             "random_state": 42,
             "class_weight": "balanced"
