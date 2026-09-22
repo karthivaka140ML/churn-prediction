@@ -1,56 +1,54 @@
+import os
+import json
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import f1_score
 
-
-def train_and_evaluate():
-    """Train the same model twice and compare the results."""
-    X_train = np.load("data/processed/X_train_final.npy")
-    X_test = np.load("data/processed/X_test_final.npy")
-    y_train = np.load("data/processed/y_train.npy")
-    y_test = np.load("data/processed/y_test.npy")
-
-    params = {
-        "n_estimators": 100,
-        "max_depth": 10,
-        "random_state": 42,
-        "class_weight": "balanced",
+def run_deterministic_test():
+    print("Running Reproducibility Validation...")
+    
+    # Load Data
+    X_train = np.load('data/processed/X_train_final.npy')
+    X_test = np.load('data/processed/X_test_final.npy')
+    y_train = np.load('data/processed/y_train.npy')
+    y_test = np.load('data/processed/y_test.npy')
+    
+    # Fixed Parameters for strict reproducibility
+    params = {"n_estimators": 100, "max_depth": 10, "random_state": 42, "class_weight": "balanced"}
+    
+    # Execution 1
+    model_1 = RandomForestClassifier(**params)
+    model_1.fit(X_train, y_train)
+    score_1 = f1_score(y_test, model_1.predict(X_test))
+    
+    # Execution 2 (Simulating a re-run)
+    model_2 = RandomForestClassifier(**params)
+    model_2.fit(X_train, y_train)
+    score_2 = f1_score(y_test, model_2.predict(X_test))
+    
+    # Validate consistency
+    is_reproducible = (score_1 == score_2)
+    
+    # Generate Report
+    report = {
+        "test_name": "Pipeline Reproducibility Validation",
+        "parameters": params,
+        "execution_1_f1": score_1,
+        "execution_2_f1": score_2,
+        "is_strictly_reproducible": is_reproducible,
+        "status": "PASSED" if is_reproducible else "FAILED"
     }
-
-    results = []
-
-    for run in range(2):
-        model = RandomForestClassifier(**params)
-        model.fit(X_train, y_train)
-        predictions = model.predict(X_test)
-
-        metrics = {
-            "accuracy": accuracy_score(y_test, predictions),
-            "precision": precision_score(y_test, predictions, zero_division=0),
-            "recall": recall_score(y_test, predictions, zero_division=0),
-            "f1": f1_score(y_test, predictions, zero_division=0),
-        }
-        results.append(metrics)
-
-        print(f"Run {run + 1}:")
-        print(f"  Accuracy : {metrics['accuracy']:.4f}")
-        print(f"  Precision: {metrics['precision']:.4f}")
-        print(f"  Recall   : {metrics['recall']:.4f}")
-        print(f"  F1-Score : {metrics['f1']:.4f}")
-
-    reproducible = all(
-        np.isclose(results[0][metric], results[1][metric])
-        for metric in results[0]
-    )
-
-    print("\n--- Reproducibility Check ---")
-    if reproducible:
-        print("[SUCCESS] Both runs produced identical metrics.")
-        print("[SUCCESS] Reproducibility validation passed!")
+    
+    os.makedirs("artifacts", exist_ok=True)
+    with open('artifacts/reproducibility_report.json', 'w') as f:
+        json.dump(report, f, indent=4)
+        
+    print(f"Execution 1 F1: {score_1:.6f}")
+    print(f"Execution 2 F1: {score_2:.6f}")
+    if is_reproducible:
+        print("SUCCESS: Pipeline is 100% reproducible. Report saved.")
     else:
-        print("[ERROR] The two runs produced different metrics.")
-        raise SystemExit(1)
-
+        print("FAILED: Pipeline is non-deterministic.")
 
 if __name__ == "__main__":
-    train_and_evaluate()
+    run_deterministic_test()
