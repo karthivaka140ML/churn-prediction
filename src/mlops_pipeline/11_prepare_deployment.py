@@ -1,5 +1,7 @@
+
 import json
 import shutil
+import tempfile
 from pathlib import Path
 
 import joblib
@@ -7,7 +9,6 @@ import mlflow
 import mlflow.sklearn
 import yaml
 from mlflow import MlflowClient
-
 
 MODEL_NAME = "Telco_Churn_Production_Model"
 
@@ -28,7 +29,10 @@ def get_production_model(client, model_name):
     ]
 
     if not production_versions:
-        raise RuntimeError(f"No Production version found for '{model_name}'.")
+        raise RuntimeError(
+            f"No Production version found for '{model_name}'. "
+            "Check the MLflow registry before preparing deployment."
+        )
 
     if len(production_versions) > 1:
         raise RuntimeError(
@@ -40,16 +44,9 @@ def get_production_model(client, model_name):
 
 def prepare_deployment():
     project_root, config = load_config()
-
     deployment_dir = project_root / "deployment"
 
-    if deployment_dir.exists():
-        shutil.rmtree(deployment_dir)
-
-    deployment_dir.mkdir(parents=True)
-
     client = MlflowClient()
-
     model_version = get_production_model(client, MODEL_NAME)
 
     model_name = model_version.name
@@ -63,72 +60,100 @@ def prepare_deployment():
     print(f"[INFO] Run ID     : {run_id}")
     print(f"[INFO] Source     : {model_source}")
 
-    print("[INFO] Downloading Production model...")
+    temp_dir = Path(tempfile.mkdtemp(
+        prefix="deployment_staging_",
+        dir=str(project_root),
+    ))
 
-    model_uri = f"models:/{model_name}/{version}"
-    model = mlflow.sklearn.load_model(model_uri)
+    backup_dir = None
 
-    model_path = deployment_dir / "model.pkl"
-    joblib.dump(model, model_path)
+    try:
+        print("[INFO] Downloading Production model...")
+        model_uri = f"models:/{model_name}/{version}"
+        model = mlflow.sklearn.load_model(model_uri)
 
-    print(f"[SUCCESS] Model saved to {model_path}")
+        model_path = temp_dir / "model.pkl"
+        joblib.dump(model, model_path)
+        print(f"[SUCCESS] Model saved to {model_path}")
 
-    print("[INFO] Downloading matching preprocessor...")
-
-    preprocessor_path = client.download_artifacts(
-        run_id,
-        "preprocessing_pipeline/preprocessor.pkl",
-        dst_path=str(deployment_dir),
-    )
-
-    downloaded_preprocessor = Path(preprocessor_path)
-
-    final_preprocessor_path = deployment_dir / "preprocessor.pkl"
-
-    if downloaded_preprocessor != final_preprocessor_path:
-        shutil.move(
-            downloaded_preprocessor,
-            final_preprocessor_path,
+        print("[INFO] Downloading matching preprocessor...")
+        preprocessor_path = client.download_artifacts(
+            run_id,
+            "preprocessing_pipeline/preprocessor.pkl",
+            dst_path=str(temp_dir),
         )
 
-    print(f"[SUCCESS] Preprocessor saved to {final_preprocessor_path}")
+        downloaded_preprocessor = Path(preprocessor_path)
+        final_preprocessor_path = temp_dir / "preprocessor.pkl"
 
-    print("[INFO] Verifying deployment artifacts...")
+        if downloaded_preprocessor.resolve() != final_preprocessor_path.resolve():
+            shutil.move(
+                str(downloaded_preprocessor),
+                str(final_preprocessor_path),
+            )
 
-    loaded_model = joblib.load(model_path)
-    loaded_preprocessor = joblib.load(final_preprocessor_path)
+        print(f"[SUCCESS] Preprocessor saved to {final_preprocessor_path}")
 
-    if loaded_model is None:
-        raise RuntimeError("Model verification failed.")
+        print("[INFO] Verifying deployment artifacts...")
+        loaded_model = joblib.load(model_path)
+        loaded_preprocessor = joblib.load(final_preprocessor_path)
 
-    if loaded_preprocessor is None:
-        raise RuntimeError("Preprocessor verification failed.")
+        if loaded_model is None or loaded_preprocessor is None:
+            raise RuntimeError("Deployment artifact verification failed.")
 
-    metadata = {
-        "model_name": model_name,
-        "model_version": str(version),
-        "model_stage": model_version.current_stage,
-        "run_id": run_id,
-        "model_source": model_source,
-        "model_id": model_source.split("/")[-1],
-        "preprocessor_artifact": "preprocessing_pipeline/preprocessor.pkl",
-        "source": "MLflow",
-    }
+        metadata = {
+            "model_name": model_name,
+            "model_version": str(version),
+            "model_stage": model_version.current_stage,
+            "run_id": run_id,
+            "model_source": model_source,
+            "model_id": model_source.split("/")[-1],
+            "preprocessor_artifact": "preprocessing_pipeline/preprocessor.pkl",
+            "source": "MLflow",
+        }
 
-    metadata_path = deployment_dir / "model_metadata.json"
+        metadata_path = temp_dir / "model_metadata.json"
+        with open(metadata_path, "w", encoding="utf-8") as file:
+            json.dump(metadata, file, indent=4)
 
-    with open(metadata_path, "w", encoding="utf-8") as file:
-        json.dump(metadata, file, indent=4)
+        print(f"[SUCCESS] Metadata saved to {metadata_path}")
 
-    print(f"[SUCCESS] Metadata saved to {metadata_path}")
+        # Pick an unused backup name; preserve existing backups.
+        if deployment_dir.exists():
+            index = 1
+            while True:
+                candidate = project_root / f"deployment_backup_{index}"
+                if not candidate.exists():
+                    backup_dir = candidate
+                    break
+                index += 1
 
-    print("\n[INFO] Deployment bundle:")
-    print("deployment/")
-    print("├── model.pkl")
-    print("├── preprocessor.pkl")
-    print("└── model_metadata.json")
+            print(f"[INFO] Preserving current deployment in {backup_dir}")
+            deployment_dir.rename(backup_dir)
 
-    print("\n[SUCCESS] Deployment preparation completed.")
+        try:
+            temp_dir.rename(deployment_dir)
+        except Exception:
+            # Restore the current deployment if promotion fails.
+            if backup_dir is not None and backup_dir.exists():
+                if not deployment_dir.exists():
+                    backup_dir.rename(deployment_dir)
+            raise
+
+        print("\n[INFO] Deployment bundle:")
+        print("deployment/")
+        print("├── model.pkl")
+        print("├── preprocessor.pkl")
+        print("└── model_metadata.json")
+
+        if backup_dir is not None:
+            print(f"[INFO] Previous deployment preserved in {backup_dir}")
+
+        print("\n[SUCCESS] Deployment preparation completed.")
+
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
