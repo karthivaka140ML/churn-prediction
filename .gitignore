@@ -79,3 +79,5 @@ desktop.ini
 *.tmp
 *.bak
 *.swp
+# Deployment backups
+deployment_backup*/
