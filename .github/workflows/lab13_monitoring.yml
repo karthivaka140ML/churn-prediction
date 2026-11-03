@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Run MLOps monitoring trigger
-        shell: powershell
+        shell: powershell -ExecutionPolicy Bypass
         run: |
           Set-Location "C:\Users\Karthik\OneDrive\Desktop\Churn prediction"
           & ".\.venv\Scripts\python.exe" ".\src\mlops_pipeline\12_monitor_trigger.py"
