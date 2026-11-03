@@ -1,5 +1,5 @@
-
 name: Lab 13 - End-to-End MLOps
+
 # Integration test: process a genuinely new incoming batch
 
 on:
@@ -14,13 +14,13 @@ jobs:
 
     steps:
       - name: Run MLOps monitoring trigger
-        shell: powershell -ExecutionPolicy Bypass
+        shell: powershell -ExecutionPolicy Bypass -File {0}
         run: |
           Set-Location "C:\Users\Karthik\OneDrive\Desktop\Churn prediction"
           & ".\.venv\Scripts\python.exe" ".\src\mlops_pipeline\12_monitor_trigger.py"
 
       - name: Show monitoring result
-        shell: powershell
+        shell: powershell -ExecutionPolicy Bypass -File {0}
         run: |
           Set-Location "C:\Users\Karthik\OneDrive\Desktop\Churn prediction"
           if (Test-Path ".\outputs\monitoring\monitor_trigger_report.json") {
@@ -30,7 +30,7 @@ jobs:
           }
 
       - name: Verify Kubernetes
-        shell: powershell
+        shell: powershell -ExecutionPolicy Bypass -File {0}
         run: |
           kubectl get deployment churn-api
           kubectl get pods
